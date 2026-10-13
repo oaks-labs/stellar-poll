@@ -1,0 +1,31 @@
+name: Feature Request
+description: Propose a new feature, improvement, or community integration
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Propose ideas to make StellarPoll more useful for Stellar communities.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem & User Benefit
+      description: What challenge does this address, and who benefits?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Detailed explanation of how this should work
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Scope & Non-Goals
+      description: What is explicitly OUT of scope for this feature?
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Testable Acceptance Criteria
+      description: How will we verify that this feature works as intended?

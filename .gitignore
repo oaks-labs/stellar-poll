@@ -7,10 +7,14 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node dependencies and build
 node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*.local
+coverage
 
 # Editor directories and files
 .vscode/*
@@ -25,4 +29,5 @@ dist-ssr
 
 # Rust / Soroban contract
 contract/target/
+contract/test_snapshots/
 *.wasm.map

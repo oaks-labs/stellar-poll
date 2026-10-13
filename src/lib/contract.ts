@@ -8,20 +8,31 @@ import {
   BASE_FEE,
   Networks,
 } from "@stellar/stellar-sdk";
-import { Client } from "@stellar/stellar-sdk/contract";
 import { Server as SorobanRpcServer } from "@stellar/stellar-sdk/rpc";
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
+import {
+  StellarPollClient,
+  type Poll,
+  type PollStatus,
+  type WalletSigner,
+  waitForConfirmation,
+  storePendingTx,
+  clearPendingTx,
+  parseRpcError,
+  isValidStellarAddress,
+  TransactionTimeoutError,
+  recheckTransactionStatus,
+} from "../sdk";
 
-const RPC_URL = "https://soroban-testnet.stellar.org";
-const NETWORK_PASSPHRASE = Networks.TESTNET;
-const CONTRACT_KEY = "stellar_live_poll_contract_id";
+export const RPC_URL = "https://soroban-testnet.stellar.org";
+export const NETWORK_PASSPHRASE = Networks.TESTNET;
+export const CONTRACT_KEY = "stellar_live_poll_contract_id";
 
-const rpcServer = new SorobanRpcServer(RPC_URL);
+export const rpcServer = new SorobanRpcServer(RPC_URL);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let cachedWasm: any = null;
+let cachedWasm: Buffer | null = null;
 
-async function signWallet(
+export async function signWallet(
   xdrStr: string,
   opts?: { networkPassphrase?: string; address?: string }
 ): Promise<{ signedTxXdr: string; signerAddress?: string }> {
@@ -31,19 +42,23 @@ async function signWallet(
   });
 }
 
+export function getSigner(publicKey: string): WalletSigner {
+  return {
+    publicKey,
+    signTransaction: (xdrStr, opts) => signWallet(xdrStr, opts),
+  };
+}
+
 async function getWasm(): Promise<Buffer> {
   if (cachedWasm) return cachedWasm;
   const res = await fetch("/live_poll.wasm");
-  if (!res.ok) throw new Error("Failed to load contract WASM");
+  if (!res.ok) throw new Error("Failed to load contract WASM file from /live_poll.wasm");
   const buf = await res.arrayBuffer();
   cachedWasm = Buffer.from(buf);
   return cachedWasm;
 }
 
-function computeContractId(
-  salt: Buffer,
-  deployerAddress: string
-): string {
+export function computeContractId(salt: Buffer, deployerAddress: string): string {
   const networkId = hash(Buffer.from(NETWORK_PASSPHRASE));
   const addr = Address.fromString(deployerAddress);
 
@@ -67,24 +82,13 @@ function computeContractId(
   return StrKey.encodeContract(contractIdBytes);
 }
 
-async function waitForConfirmation(txHash: string): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    const resp = await rpcServer.getTransaction(txHash);
-    if (resp.status === "SUCCESS") return;
-    if (resp.status === "FAILED")
-      throw new Error("Transaction failed on-chain");
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  throw new Error("Transaction timed out");
-}
-
 export async function deployContract(
   deployerAddress: string
 ): Promise<{ contractId: string; hash: string }> {
   const wasm = await getWasm();
   const wasmHashBuf = Buffer.from(hash(wasm));
 
-  // Step 1: Upload WASM
+  // Step 1: Upload WASM bytecode
   const account1 = await rpcServer.getAccount(deployerAddress);
   const uploadTx = new TransactionBuilder(account1, {
     fee: BASE_FEE,
@@ -101,11 +105,28 @@ export async function deployContract(
   );
   const uploaded = TransactionBuilder.fromXDR(signedUpload, NETWORK_PASSPHRASE);
   const uploadResult = await rpcServer.sendTransaction(uploaded);
-  if (uploadResult.status !== "PENDING")
-    throw new Error("Upload submission failed");
-  await waitForConfirmation(uploadResult.hash);
 
-  // Step 2: Compute contract ID & deploy
+  if (uploadResult.status === "ERROR") {
+    throw parseRpcError(new Error("Contract bytecode upload failed on submission"));
+  }
+
+  storePendingTx({
+    hash: uploadResult.hash,
+    operation: "deploy",
+    description: "Uploading contract bytecode",
+    timestamp: Date.now(),
+    network: "testnet",
+    contractId: "",
+    walletAddress: deployerAddress,
+  });
+  await waitForConfirmation(rpcServer, uploadResult.hash);
+  clearPendingTx({
+    network: "testnet",
+    contractId: "",
+    walletAddress: deployerAddress,
+  });
+
+  // Step 2: Instantiate contract instance
   const salt = hash(Buffer.from(deployerAddress + Date.now().toString()));
   const contractId = computeContractId(salt, deployerAddress);
 
@@ -131,9 +152,26 @@ export async function deployContract(
   );
   const created = TransactionBuilder.fromXDR(signedCreate, NETWORK_PASSPHRASE);
   const createResult = await rpcServer.sendTransaction(created);
-  if (createResult.status !== "PENDING")
-    throw new Error("Create submission failed");
-  await waitForConfirmation(createResult.hash);
+
+  if (createResult.status === "ERROR") {
+    throw parseRpcError(new Error("Contract creation failed on submission"));
+  }
+
+  storePendingTx({
+    hash: createResult.hash,
+    operation: "deploy",
+    description: `Deploying contract instance ${contractId.slice(0, 8)}...`,
+    timestamp: Date.now(),
+    network: "testnet",
+    contractId,
+    walletAddress: deployerAddress,
+  });
+  await waitForConfirmation(rpcServer, createResult.hash);
+  clearPendingTx({
+    network: "testnet",
+    contractId,
+    walletAddress: deployerAddress,
+  });
 
   storeContractId(contractId);
   return { contractId, hash: createResult.hash };
@@ -151,62 +189,39 @@ export function clearContractId(): void {
   localStorage.removeItem(CONTRACT_KEY);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyClient = Client & Record<string, (...args: any[]) => Promise<any>>;
-
-async function makeClient(
-  contractId: string,
-  publicKey?: string
-): Promise<AnyClient> {
-  const opts: Record<string, unknown> = {
+export function getPollClient(contractId: string): StellarPollClient {
+  return new StellarPollClient({
     rpcUrl: RPC_URL,
     networkPassphrase: NETWORK_PASSPHRASE,
     contractId,
-  };
-  if (publicKey) {
-    opts.publicKey = publicKey;
-    opts.signTransaction = signWallet;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const client = await Client.from(opts as any);
-  return client as AnyClient;
+  });
 }
 
 export async function initializeContract(
   contractId: string,
   publicKey: string
 ): Promise<{ hash: string }> {
-  const client = await makeClient(contractId, publicKey);
-  const tx = await client.initialize();
-  const sent = await tx.signAndSend();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resp = (sent as any).sendTransactionResponse as
-    | { hash: string }
-    | undefined;
-  return { hash: resp?.hash ?? "" };
+  const client = getPollClient(contractId);
+  return client.initialize(getSigner(publicKey));
 }
 
 export async function createPollOnChain(
   contractId: string,
   publicKey: string,
   question: string,
-  options: string[]
+  options: string[],
+  startTime = 0,
+  endTime = 0,
+  allowlist: string[] = []
 ): Promise<{ hash: string; pollId: number }> {
-  const client = await makeClient(contractId, publicKey);
-  const tx = await client.create_poll({
-    creator: publicKey,
+  const client = getPollClient(contractId);
+  return client.createPoll(getSigner(publicKey), {
     question,
     options,
+    startTime,
+    endTime,
+    allowlist,
   });
-  const sent = await tx.signAndSend();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resp = (sent as any).sendTransactionResponse as
-    | { hash: string }
-    | undefined;
-  return {
-    hash: resp?.hash ?? "",
-    pollId: typeof tx.result === "number" ? tx.result : 0,
-  };
 }
 
 export async function voteOnPoll(
@@ -215,92 +230,11 @@ export async function voteOnPoll(
   pollId: number,
   optionIndex: number
 ): Promise<{ hash: string }> {
-  const client = await makeClient(contractId, publicKey);
-  const tx = await client.vote({
-    voter: publicKey,
-    poll_id: pollId,
-    option_index: optionIndex,
+  const client = getPollClient(contractId);
+  return client.vote(getSigner(publicKey), {
+    pollId,
+    optionIndex,
   });
-  const sent = await tx.signAndSend();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resp = (sent as any).sendTransactionResponse as
-    | { hash: string }
-    | undefined;
-  return { hash: resp?.hash ?? "" };
-}
-
-export interface PollData {
-  id: number;
-  question: string;
-  options: string[];
-  votes: number[];
-  creator: string;
-  totalVotes: number;
-  active: boolean;
-}
-
-export async function getPollData(
-  contractId: string,
-  pollId: number
-): Promise<PollData | null> {
-  try {
-    const client = await makeClient(contractId);
-    const tx = await client.get_poll({ poll_id: pollId });
-    const r = tx.result;
-    if (!r || typeof r !== "object") return null;
-    return {
-      id: Number((r as Record<string, unknown>).id ?? pollId),
-      question: String((r as Record<string, unknown>).question ?? ""),
-      options: Array.isArray((r as Record<string, unknown>).options)
-        ? ((r as Record<string, unknown>).options as unknown[]).map(String)
-        : [],
-      votes: Array.isArray((r as Record<string, unknown>).votes)
-        ? ((r as Record<string, unknown>).votes as unknown[]).map(Number)
-        : [],
-      creator: String((r as Record<string, unknown>).creator ?? ""),
-      totalVotes: Number((r as Record<string, unknown>).total_votes ?? 0),
-      active: Boolean((r as Record<string, unknown>).active ?? true),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function getPollResults(
-  contractId: string,
-  pollId: number
-): Promise<number[]> {
-  try {
-    const client = await makeClient(contractId);
-    const tx = await client.get_results({ poll_id: pollId });
-    return Array.isArray(tx.result) ? (tx.result as number[]).map(Number) : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function hasVotedOnPoll(
-  contractId: string,
-  pollId: number,
-  voter: string
-): Promise<boolean> {
-  try {
-    const client = await makeClient(contractId);
-    const tx = await client.has_voted({ poll_id: pollId, voter });
-    return Boolean(tx.result);
-  } catch {
-    return false;
-  }
-}
-
-export async function getPollCount(contractId: string): Promise<number> {
-  try {
-    const client = await makeClient(contractId);
-    const tx = await client.get_poll_count();
-    return Number(tx.result);
-  } catch {
-    return 0;
-  }
 }
 
 export async function closePollOnChain(
@@ -308,20 +242,61 @@ export async function closePollOnChain(
   publicKey: string,
   pollId: number
 ): Promise<{ hash: string }> {
-  const client = await makeClient(contractId, publicKey);
-  const tx = await client.close_poll({ caller: publicKey, poll_id: pollId });
-  const sent = await tx.signAndSend();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resp = (sent as any).sendTransactionResponse as
-    | { hash: string }
-    | undefined;
-  return { hash: resp?.hash ?? "" };
+  const client = getPollClient(contractId);
+  return client.closePoll(getSigner(publicKey), pollId);
+}
+
+export async function getPollData(
+  contractId: string,
+  pollId: number
+): Promise<Poll | null> {
+  const client = getPollClient(contractId);
+  return client.getPoll(pollId);
+}
+
+export async function getPollStatus(
+  contractId: string,
+  pollId: number
+): Promise<PollStatus> {
+  const client = getPollClient(contractId);
+  return client.getPollStatus(pollId);
+}
+
+export async function getPollResults(
+  contractId: string,
+  pollId: number
+): Promise<number[]> {
+  const client = getPollClient(contractId);
+  return client.getResults(pollId);
+}
+
+export async function hasVotedOnPoll(
+  contractId: string,
+  pollId: number,
+  voter: string
+): Promise<boolean> {
+  const client = getPollClient(contractId);
+  return client.hasVoted(pollId, voter);
+}
+
+export async function getPollCount(contractId: string): Promise<number> {
+  const client = getPollClient(contractId);
+  return client.getPollCount();
+}
+
+export async function getPollPage(
+  contractId: string,
+  page: number,
+  pageSize = 5
+): Promise<Poll[]> {
+  const client = getPollClient(contractId);
+  return client.getPollPage(page, pageSize);
 }
 
 export function shortenAddress(address: string, chars = 6): string {
+  if (!address || address.length < chars * 2) return address;
   return `${address.slice(0, chars)}...${address.slice(-chars)}`;
 }
 
-export function isValidStellarAddress(address: string): boolean {
-  return /^G[A-Z0-9]{55}$/.test(address);
-}
+export { isValidStellarAddress, TransactionTimeoutError, recheckTransactionStatus };
+export type { Poll, PollStatus };

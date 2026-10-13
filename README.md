@@ -1,160 +1,220 @@
-# StellarPoll - Real-time Voting on Stellar Testnet
+# StellarPoll
 
-A real-time voting dApp built on Stellar Soroban smart contracts that allows users to deploy a Live Poll contract, create polls, vote, and see results update in real-time.
+> An open-source, decentralized polling toolkit built on Stellar Soroban smart contracts.
 
-Built as part of the [Stellar Journey to Mastery](https://stellarjourneytomastery.com/) - Level 2 Yellow Belt Challenge.
+[![CI](https://github.com/OAKVISUALZ/stellar-poll/actions/workflows/ci.yml/badge.svg)](https://github.com/OAKVISUALZ/stellar-poll/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
+[![Stellar Protocol](https://img.shields.io/badge/Stellar-Protocol%2021+-blue.svg)](https://stellar.org)
+[![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
 
-## Live Demo
+StellarPoll provides Stellar communities, DAOs, and developer teams with a reliable, verifiable on-chain voting toolkit. It eliminates off-chain manipulation through smart-contract-enforced one-wallet-one-vote invariants, lifecycle timestamps, bounded storage guarantees, and a reusable typed TypeScript SDK.
 
-🔗 **https://stellar-wallet-oak.netlify.app/**
+---
 
-Transaction: https://stellar.expert/explorer/testnet/tx/d924cdbbeaa534a9c4c5a8270a29761c37bef3571790b67f3ded4ce5978969e5
+## Key Features
 
-## Features
+- **On-Chain Cryptographic Voting**: Votes are signed by voter wallets, verified on-chain, and recorded immutably on the Stellar ledger.
+- **Strict Invariant Enforcement**:
+  - One vote per wallet per poll (`AlreadyVoted` prevention).
+  - Creator-only poll closing permissions.
+  - Bounded input limits (questions: 3–280 chars; options: 2–10, each 1–100 chars) preventing storage abuse.
+- **Dynamic Poll Lifecycles**:
+  - `Scheduled`: Opens automatically at a specified Unix timestamp.
+  - `Open`: Accepts votes from eligible participants.
+  - `Closed`: Terminated automatically upon deadline or manually by the creator.
+- **Restricted Voter Allowlists**: Optional bounded allowlists (up to 50 addresses) for council elections, committee approvals, or private governance.
+- **Paginated Discovery**: Reverse-chronological pagination (`get_poll_page`) eliminating N+1 sequential RPC loops and rate limits.
+- **Stable, Shareable Poll Links**: Direct navigation and fresh-browser support via `?network=testnet&contract=<id>&poll=<id>` URL parameters without requiring prior local storage or connected wallet.
+- **Reusable TypeScript SDK**: Standalone, typed SDK (`src/sdk/`) decoupling read queries from wallet-signed mutations.
 
-- **Multi-Wallet Integration** - Connect via Freighter and other Stellar wallets using Stellar Wallets Kit
-- **Smart Contract Deployment** - Deploy a Soroban Live Poll contract directly from the frontend to testnet
-- **Contract Interaction** - Create polls, vote, close polls, and query results from the frontend
-- **Real-time State Sync** - Poll results auto-refresh every 15 seconds with manual refresh
-- **Transaction Status Tracking** - Live pending/success/error states with Stellar Expert links
-- **Error Handling** - Handles wallet not found, transaction rejected, and insufficient balance errors
-- **Responsive Design** - Clean dark-themed UI that works on desktop and mobile
+---
 
+## System Architecture
 
+```
+┌────────────────────────────────────────────────────────┐
+│                   React 19 Frontend                    │
+│   (PollCreator, PollList, PollCard, ContractSetup)    │
+└───────────────────────────┬────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│                  StellarPoll Client SDK                │
+│    (Read Queries, Tx Submissions, Confirmation Loop)   │
+└──────────────┬───────────────────────────┬─────────────┘
+               │ (Direct Queries)          │ (Sign Calls)
+               │                           │
+┌──────────────▼────────────┐  ┌───────────▼─────────────┐
+│    Soroban RPC Server     │  │   Stellar Wallets Kit   │
+│ (https://soroban-testnet) │  │  (Freighter / Albedo)   │
+└──────────────┬────────────┘  └───────────┬─────────────┘
+               │                           │
+┌──────────────▼───────────────────────────▼─────────────┐
+│          Soroban Smart Contract (LivePoll)             │
+│   - Instance Storage: NEXT_ID, ADMIN                   │
+│   - Persistent Storage: (POLL, id), (VOTED, id, voter) │
+│   - Time Invariants: start_time, end_time              │
+│   - Auth Invariants: creator auth, voter auth          │
+└────────────────────────────────────────────────────────┘
+```
 
-### Wallet Options Available
-<img width="1366" height="597" alt="image" src="https://github.com/user-attachments/assets/ee133b8a-f2e0-4b76-aab5-ace44c5791e0" />
-<img width="1366" height="581" alt="image" src="https://github.com/user-attachments/assets/beb7af1b-c403-456a-a338-4dd0792bab43" />
-<img width="1366" height="636" alt="image" src="https://github.com/user-attachments/assets/c012013a-e92c-4547-9b11-a9d6de58257f" />
-<img width="1366" height="688" alt="image" src="https://github.com/user-attachments/assets/e6da8f4d-5082-4b2e-b4d7-a7854445ef75" />
-<img width="1366" height="606" alt="image" src="https://github.com/user-attachments/assets/d265c55a-df1c-4e2c-b12d-00949b987d74" />
+For detailed protocol semantics and storage layouts, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-
-
-
-
-
-### Poll Creation
-
-
-### Voting & Results
-<img width="1366" height="686" alt="image" src="https://github.com/user-attachments/assets/8244ec03-56eb-4e2a-93a7-371cab701eaf" />
-
-## Smart Contract
-
-The project includes a Soroban smart contract (`contract/src/lib.rs`) deployed to Stellar Testnet.
-
-**Contract Address:** `[DEPLOYED_CONTRACT_ADDRESS]`
-
-> Run the app and click "Deploy Contract" to deploy your own instance, or use a pre-deployed one.
-
-### Contract Functions
-
-| Function | Description |
-|---|---|
-| `initialize()` | Initialize the contract |
-| `create_poll(creator, question, options)` | Create a new poll with 2-10 options |
-| `vote(voter, poll_id, option_index)` | Cast a vote (one vote per wallet per poll) |
-| `get_poll(poll_id)` | Get full poll data |
-| `get_results(poll_id)` | Get vote counts |
-| `has_voted(poll_id, voter)` | Check if a wallet has voted |
-| `get_poll_count()` | Get total number of polls |
-| `close_poll(caller, poll_id)` | Close a poll (creator only) |
-
-### Events
-
-- `CREATE` - Emitted when a new poll is created
-- `VOTE` - Emitted when a vote is cast
-- `CLOSE` - Emitted when a poll is closed
+---
 
 ## Tech Stack
 
-- **React 19** + **TypeScript** + **Vite**
-- **Tailwind CSS v4** for styling
-- **@creit.tech/stellar-wallets-kit** for multi-wallet support
-- **@stellar/stellar-sdk** v16 for Stellar blockchain and Soroban interaction
-- **Soroban SDK** v21 for smart contract (Rust/WASM)
+- **Smart Contract**: Rust, `soroban-sdk v21`, `wasm32-unknown-unknown`
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4
+- **Wallet Connection**: `@creit.tech/stellar-wallets-kit v2.5`
+- **Stellar Interaction**: `@stellar/stellar-sdk v16`
+- **Testing**: `soroban-sdk::testutils` (Rust), `vitest` + `happy-dom` (TypeScript)
+- **Linting**: `oxlint`
+
+---
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) v18+
-- [Rust](https://rustup.rs/) with `wasm32-unknown-unknown` target (for contract builds)
-- [Freighter Browser Extension](https://freighter.app/) installed and set to **Testnet** mode
+- [Node.js](https://nodejs.org/) v20+ or v22+
+- [Rust](https://rustup.rs/) v1.80+ with the `wasm32-unknown-unknown` target:
+  ```bash
+  rustup target add wasm32-unknown-unknown
+  ```
+- A Stellar wallet extension such as [Freighter](https://www.freighter.app/) set to **Testnet** mode.
 
-## Setup Instructions
+---
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/stellar-poll.git
-   cd stellar-poll
-   ```
+## Quickstart & Setup
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+### 1. Clone the repository
+```bash
+git clone https://github.com/OAKVISUALZ/stellar-poll.git
+cd stellar-poll
+```
 
-3. **Build the smart contract** (pre-built WASM is included in `public/`)
-   ```bash
-   cd contract
-   cargo build --release --target wasm32-unknown-unknown
-   cp target/wasm32-unknown-unknown/release/live_poll.wasm ../public/live_poll.wasm
-   cd ..
-   ```
+### 2. Install dependencies
+```bash
+# Note: Use --ignore-scripts to avoid platform-specific postinstall shell scripts
+npm install --ignore-scripts
+```
 
-4. **Start the development server**
-   ```bash
-   npm run dev
-   ```
+### 3. Build & Test the Smart Contract
+```bash
+cd contract
+cargo test
+cargo build --release --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/release/live_poll.wasm ../public/live_poll.wasm
+cd ..
+```
 
-5. **Open in browser**
-   Navigate to `https://stellar-poll.netlify.app/`
+### 4. Run the Quality Verification Suite
+```bash
+# Linting
+npm run lint
 
-6. **Get testnet XLM**
-   Use the [Stellar Testnet Faucet](https://friendbot.stellar.org/) to fund your wallet:
+# TypeScript SDK & Component Tests
+npm run test
+
+# Type Checking & Web App Build
+npm run build
+```
+
+### 5. Start the Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+---
+
+## Verified Stellar Testnet Deployment
+
+A live, verified `LivePoll` contract instance is deployed on Stellar Testnet:
+
+- **Contract ID**: `CAK3AV4ZZKYTTXVG6DHLS5GSCDVNV5DHB6YSZRHQNOLW4FEBJQK7VBSU`
+- **Deployer Public Key**: `GDIMHFYQBXURXI4CDJNZKWCKHQDVCXSJH7RAV2ZULI3CG57TJBDAZ4AX`
+- **WASM Upload Tx**: [`4fdff67cdd846b3c5fe3cc38cd567e9d581f2b1e0766fdc70bca1a226ab462bc`](https://stellar.expert/explorer/testnet/tx/4fdff67cdd846b3c5fe3cc38cd567e9d581f2b1e0766fdc70bca1a226ab462bc)
+- **Contract Deploy Tx**: [`62c3030e7834f680190e6206379f3de2620d18bc5e6f324c080a6c8c7fa106e0`](https://stellar.expert/explorer/testnet/tx/62c3030e7834f680190e6206379f3de2620d18bc5e6f324c080a6c8c7fa106e0)
+- **Initialize Tx**: [`ca0f040212efe5f50471ff246fb25a7854c32453eb99e92d76a8e26276657ef2`](https://stellar.expert/explorer/testnet/tx/ca0f040212efe5f50471ff246fb25a7854c32453eb99e92d76a8e26276657ef2)
+- **Create Poll #0 Tx**: [`f459d56d37279846f3207d12e1b5f19e053c83010c7088f380641bf62bf85eaa`](https://stellar.expert/explorer/testnet/tx/f459d56d37279846f3207d12e1b5f19e053c83010c7088f380641bf62bf85eaa)
+- **Vote Poll #0 Tx**: [`0e3ccc8ad4e2651014fe4512f818516d4aa74c401d1ba2cf2893e6d4ccf36eb6`](https://stellar.expert/explorer/testnet/tx/0e3ccc8ad4e2651014fe4512f818516d4aa74c401d1ba2cf2893e6d4ccf36eb6)
+- **Close Poll #0 Tx**: [`848b2409ba5debc265c53ba762770de05e58fc7e66e871559f3a93f1055d852b`](https://stellar.expert/explorer/testnet/tx/848b2409ba5debc265c53ba762770de05e58fc7e66e871559f3a93f1055d852b)
+- **Create Poll #1 Tx**: [`b07bc4cc400f4c7c46a91a85f7b6225826970e43ca9d216d96d05cae201e879d`](https://stellar.expert/explorer/testnet/tx/b07bc4cc400f4c7c46a91a85f7b6225826970e43ca9d216d96d05cae201e879d)
+
+### Deploying Your Own Instance
+
+1. Obtain testnet XLM via the [Stellar Testnet Faucet](https://friendbot.stellar.org/):
    ```bash
    curl "https://friendbot.stellar.org?addr=YOUR_PUBLIC_KEY"
    ```
+2. Open the application, connect your Freighter wallet, and click **Deploy New Poll Contract**.
+3. Alternatively, paste `CAK3AV4ZZKYTTXVG6DHLS5GSCDVNV5DHB6YSZRHQNOLW4FEBJQK7VBSU` under **Connect to Existing Contract**.
 
-## How to Use
+---
 
-1. Click **Connect Wallet** and select your wallet (Freighter recommended)
-2. Click **Deploy Contract** to deploy the Live Poll contract to testnet
-3. **Create a Poll** with a question and 2-10 options
-4. **Vote** on any active poll by clicking an option
-5. Watch results update in **real-time** (auto-refreshes every 15s)
-6. View all transactions on **Stellar Expert**
+## TypeScript SDK Usage
 
-## Error Types Handled
+The extracted SDK allows external apps, bots, or scripts to interact with StellarPoll contracts:
 
-1. **Wallet Not Found** - When no Stellar wallet extension is installed
-2. **Transaction Rejected** - When the user rejects a transaction in their wallet
-3. **Insufficient Balance** - When the user doesn't have enough XLM for fees
+```typescript
+import { StellarPollClient } from "./sdk";
 
-## Project Structure
+// 1. Initialize client with verified Testnet contract
+const client = new StellarPollClient({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  contractId: "CAK3AV4ZZKYTTXVG6DHLS5GSCDVNV5DHB6YSZRHQNOLW4FEBJQK7VBSU",
+});
 
+// 2. Verify contract interface before querying
+await client.verifyContractInterface();
+
+// 3. Read-only query (no wallet required)
+const total = await client.getPollCount();
+const page = await client.getPollPage(0, 5); // Newest 5 polls
+
+// 4. Vote with a connected wallet signer
+await client.vote(walletSigner, {
+  pollId: 1,
+  optionIndex: 0,
+});
 ```
-src/
-  lib/
-    stellar.ts          # Wallet connection and payment operations
-    contract.ts         # Soroban contract interaction (deploy, call, query)
-  components/
-    WalletConnection.tsx  # Wallet connect/disconnect UI
-    BalanceDisplay.tsx    # XLM and asset balance display
-    ContractSetup.tsx     # Contract deployment UI
-    PollCreator.tsx       # Create new poll form
-    PollList.tsx          # List of polls with auto-refresh
-    PollCard.tsx          # Individual poll with voting and results
-    TransactionStatus.tsx # Transaction pending/success/error display
-  App.tsx               # Main application component
-  main.tsx              # App entry point
-  index.css             # Tailwind CSS + custom styles
-contract/
-  src/
-    lib.rs              # Soroban smart contract (Rust)
-  Cargo.toml            # Contract dependencies
+
+See [examples/quickstart.ts](examples/quickstart.ts) for an end-to-end integration script. You can run it directly with:
+
+```bash
+npm run example:quickstart
 ```
+
+---
+
+## Smart Contract Functions
+
+| Function | Parameters | Authorization | Description |
+|---|---|---|---|
+| `initialize` | `admin: Option<Address>` | `admin.require_auth()` | Initializes contract counter and admin metadata. |
+| `create_poll` | `creator, question, options` | `creator.require_auth()` | Creates a standard open public poll. |
+| `create_poll_advanced` | `creator, question, options, start_time, end_time, allowlist` | `creator.require_auth()` | Creates a scheduled, expiring, or allowlisted poll. |
+| `vote` | `voter, poll_id, option_index` | `voter.require_auth()` | Casts a single vote on an active poll. |
+| `close_poll` | `caller, poll_id` | `caller.require_auth()` | Closes an active poll (creator only). |
+| `get_poll` | `poll_id` | None (Read-only) | Retrieves full poll data. |
+| `get_poll_page` | `page, page_size` | None (Read-only) | Retrieves paginated polls (newest first). |
+| `get_poll_status` | `poll_id` | None (Read-only) | Returns dynamic status (`Scheduled`, `Open`, `Closed`). |
+| `get_results` | `poll_id` | None (Read-only) | Returns vector of vote counts. |
+| `has_voted` | `poll_id, voter` | None (Read-only) | Checks if a wallet has voted on a poll. |
+| `get_poll_count` | None | None (Read-only) | Returns total polls created. |
+
+---
+
+## Documentation
+
+- [Architecture & Design](docs/ARCHITECTURE.md)
+- [Compatibility & Migration Plan](docs/MIGRATION.md)
+- [Release Checklist & Maintainer Guide](docs/RELEASE_CHECKLIST.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+
+---
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE).

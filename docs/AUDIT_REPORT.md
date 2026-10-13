@@ -2,7 +2,7 @@
 
 **Date:** October 13, 2026  
 **Auditor:** Senior Stellar/Soroban Engineer & Open-Source Mentor  
-**Repository:** [stellar-poll](https://github.com/OAKVISUALZ/stellar-poll)  
+**Repository:** [stellar-poll](https://github.com/oaks-labs/stellar-poll)  
 **Target:** Stellar Testnet / Soroban Protocol 21+  
 
 ---

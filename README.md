@@ -2,7 +2,7 @@
 
 > An open-source, decentralized polling toolkit built on Stellar Soroban smart contracts.
 
-[![CI](https://github.com/OAKVISUALZ/stellar-poll/actions/workflows/ci.yml/badge.svg)](https://github.com/OAKVISUALZ/stellar-poll/actions/workflows/ci.yml)
+[![CI](https://github.com/oaks-labs/stellar-poll/actions/workflows/ci.yml/badge.svg)](https://github.com/oaks-labs/stellar-poll/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Stellar Protocol](https://img.shields.io/badge/Stellar-Protocol%2021+-blue.svg)](https://stellar.org)
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
